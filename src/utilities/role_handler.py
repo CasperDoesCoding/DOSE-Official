@@ -1,17 +1,13 @@
-import datetime
-from email.mime import image
 from logging import getLogger
-from xmlrpc.client import Boolean
 
 import discord
 from utilities.data_handling import get_data_handler, DataHandler, Folder
 from json import load as json_load, dump as json_dump
 from discord.ext import commands
 
+from utilities.role_configuration import RoleConfigurationManager, RoleConfiguration
+
 class RoleHandler():
-    """
-    
-    """
     def __init__(self, bot: commands.Bot) -> None:
         # get the data handler
         self.data_handler: DataHandler = get_data_handler()
@@ -19,14 +15,14 @@ class RoleHandler():
         # get the bot
         self.bot: commands.Bot = bot
 
-        # load the role configuration
-        self.stored_role_configuration: dict = None
+        # create the role configuration manager
+        self.role_configuration_manager: RoleConfigurationManager = RoleConfigurationManager(self.bot, self.data_handler)
 
         # load the logger
         self.logger = getLogger("role")
 
     async def get_matching_role_configurations(self, member: discord.Member) -> dict:
-            """
+        """
             Gets the matching role configurations for a member.
             
             Args:
@@ -35,47 +31,44 @@ class RoleHandler():
             Returns:
             - dict: A dictionary containing the matching role configurations for the member.
             """
-            self.logger.info(f"Getting role configurations for {member.name} ({member.id})")
-            
-            # get the role configuration
-            role_configuration_json = self.stored_role_configuration
-            
-            # get all of users roles that are in the role configuration.
-            members_roles = [role for role in member.roles if str(role.id) in role_configuration_json]
+        self.logger.info(f"Getting role configurations for {member.name} ({member.id})")
 
-            # get all of the role configurations for the users roles
-            users_role_configurations: dict = {}
-            for role in members_roles:
-                # get the role configuration
-                role_configuration = role_configuration_json[str(role.id)]
-                
-                # add the role configuration to the dict
-                users_role_configurations[str(role.id)] = role_configuration
-            
-            self.logger.debug(f"Found configurations for the following roles: {[role_id for role_id in users_role_configurations]}")
-            
-            try:
-                # remove empty configurations from the dict eg: "cant_combine_with": [] and "required_by": []
-                for role_id in users_role_configurations:
-                    configuration = users_role_configurations[role_id]
-                    # loop through the keys in the configuration
-                    for key, value in configuration.copy().items():
-                        # check if the key is empty
-                        if isinstance(value, list):
-                            if value == []:
-                                # remove the key
-                                configuration.pop(key)
-                
-                self.logger.debug(users_role_configurations)
-                self.logger.debug(f"Found configurations for the following roles 2: {[role_id for role_id in users_role_configurations]}")
-                
-                return users_role_configurations
-            except Exception as error:
-                self.logger.error(f"Failed to get matching role configurations for {member.name} ({member.id})")
-                self.logger.error(error)
-                return {}
+        # get the role configuration
+        role_configuration_json = self.stored_role_configuration
 
-    async def send_user_dm_notice(self, member: discord.Member, discord_embed: discord.Embed, force_msg: bool) -> Boolean:
+        # get all of users roles that are in the role configuration.
+        members_roles = [role for role in member.roles if str(role.id) in role_configuration_json]
+
+        users_role_configurations: dict = {
+            str(role.id): role_configuration_json[str(role.id)]
+            for role in members_roles
+        }
+        self.logger.debug(
+            f"Found configurations for the following roles: {list(users_role_configurations)}"
+        )
+
+        try:
+            # remove empty configurations from the dict eg: "cant_combine_with": [] and "required_by": []
+            for configuration in users_role_configurations.values():
+                # loop through the keys in the configuration
+                for key, value in configuration.copy().items():
+                    # check if the key is empty
+                    if isinstance(value, list) and value == []:
+                        # remove the key
+                        configuration.pop(key)
+
+            self.logger.debug(users_role_configurations)
+            self.logger.debug(
+                f"Found configurations for the following roles 2: {list(users_role_configurations)}"
+            )
+
+            return users_role_configurations
+        except Exception as error:
+            self.logger.error(f"Failed to get matching role configurations for {member.name} ({member.id})")
+            self.logger.error(error)
+            return {}
+
+    async def send_user_dm_notice(self, member: discord.Member, discord_embed: discord.Embed, force_msg: bool) -> bool:
         """
         Sends a user a dm notice.
         
@@ -84,7 +77,7 @@ class RoleHandler():
         - discord_embed (discord.Embed): The embed to send to the user.
 
         Returns:
-        - Boolean: Whether or not the dm was sent successfully.
+        - bool: Whether or not the dm was sent successfully.
         """
         # create a str containing the members name and id.
         member_str = f"{member.name} ({member.id})"
@@ -332,40 +325,38 @@ class RoleHandler():
         """
         # create a str containing the members name and id.
         member_str: str = f"{member.name} ({member.id})"
-        
+
         # log the start of the role grant check
         self.logger.info(f"Starting role grant check for {member_str}")
-        
+
         # get the guild
         guild: discord.Guild = member.guild
-        
+
         # if there is no guild, return an empty list
         if guild is None:
             self.logger.info(f"{member_str} is not in our server?, skipping check.")
             return []
 
-        # get the roles that grant other roles
-        role_grant_configurations: dict = {}
-        # get all of the roles that have a grants_role field
-        for role_id in members_role_configurations:
-            # check if the role has a grants_role field
-            if "grants_role" in members_role_configurations[role_id]:
-                role_grant_configurations[role_id] = members_role_configurations[role_id]
- 
+        role_grant_configurations: dict = {
+            role_id: members_role_configurations[role_id]
+            for role_id, value in members_role_configurations.items()
+            if "grants_role" in value
+        }
+        
         # check if there are any roles that grant other roles
         if len(role_grant_configurations) <= 0:
             # return an empty list
             self.logger.info(f"{member.name} does not have any roles that grant other roles, skipping check.")
             return []
-        
+
         self.logger.debug(f"Found configurations for the following roles: {[role_grant_configurations[role_id]['role_name'] for role_id in role_grant_configurations]}")
-        
+
         # get the roles that grant other roles from the role configuration dict
         roles_to_add: list[discord.Role] = []
-        for role_id in role_grant_configurations:
+        for role_id, value_ in role_grant_configurations.items():
             # get the roles that the role grants
             roles_that_are_granted: list[discord.Role] = [guild.get_role(int(role_id)) for role_id in role_grant_configurations[role_id]["grants_role"]]
-            
+
             # get all of the roles that should be granted that the user does not have
             roles_that_should_be_granted: list[discord.Role] = [role for role in roles_that_are_granted if role not in member.roles]
 
@@ -374,45 +365,36 @@ class RoleHandler():
                 continue
 
             # log the roles that are being added
-            self.logger.info(f"{member_str} does not have the following roles that are granted by {role_grant_configurations[role_id]['role_name']}: {[role.name for role in roles_that_should_be_granted]}, adding them.")
-            
+            self.logger.info(
+                f"{member_str} does not have the following roles that are granted by {value_['role_name']}: {[role.name for role in roles_that_should_be_granted]}, adding them."
+            )
+
             # add the roles
             roles_to_add.append(*roles_that_should_be_granted)
-        
+
         # remove duplicates from the list
         roles_to_add = list(dict.fromkeys(roles_to_add))
-        
-        if len(roles_to_add) > 0:
+
+        if roles_to_add:
             self.logger.info(f"Role grant check added the following roles: {[role.name for role in roles_to_add]} to {member_str}")
-            
+
         # add the roles
         await member.add_roles(*roles_to_add)
-    
+
         self.logger.info(f"Finished role grant check for {member_str}")
         return roles_to_add
 
-    async def validate_users_roles(self, member: discord.Member) -> Boolean:
+    async def validate_roles(self, member: discord.Member) -> bool:
         """
         Validates the users roles.
         """
-        if member is None:
-            raise ValueError("You must provide a member to validate the roles for.")
-        
+        return
         # create a str containing the users name and id and store it inside of the member class, temporarily until I write a custom member class.
         member_str = f"{member.name} ({member.id})"
         
         self.logger.info(f"Starting validation of roles for user: {member_str}")
         
-        if member.bot:
-            self.logger.info(f"{member_str} is a bot, skipping validation.")
-            return False
-        if member.guild is None:
-            self.logger.info(f"{member_str} is not in a guild, skipping validation.")
-            # Implement searching for the member in the guild. This should be fixed when I write a custom member class replacing discord.Member
-            return False
-        if self.stored_role_configuration is None:
-            self.logger.info(f"Role configuration is not loaded. Aborting validation for {member_str}")
-            return False
+
         
         self.logger.info("Getting role configurations...")
         members_role_configurations = await self.get_matching_role_configurations(member)
@@ -517,62 +499,7 @@ class RoleHandler():
         
         return True
                 
-    def load_role_configuration(self) -> None:
-        """
-        Loads the role configuration from the role configuration file.
-
-        Returns:
-            dict: The role configuration loaded from the file.
-        """
-        # get the configuration folder
-        role_configuration_folder: Folder = self.data_handler.search_for_folder("configuration")
-        
-        # get the role configuration file
-        role_configuration_file = role_configuration_folder.get_file("role_configuration.json", create_if_none=False)
-        
-        if role_configuration_file is None:
-            return self.create_role_configuration()
-        
-        # load the role configuration
-        role_configuration_json: dict = None
-        with open(role_configuration_file, "r") as file:
-            role_configuration_json = json_load(file)
-            
-        # add any missing roles
-        guild = self.bot.get_guild(self.bot.production_server_id)
-        
-        if guild is None:
-            raise ValueError("Development guild is not found.")
-        
-        # get the roles
-        roles = guild.roles
-
-        new_roles = {}
-        # add the roles to the role configuration
-        for role in roles:
-            if role.name == "@everyone":
-                continue
-            
-            # check if there is a role in the role configuration with the same role id
-            if str(role.id) not in role_configuration_json:
-                new_roles[role.id] = {
-                    "role_name": role.name,
-                    "requires_supporter_status": False,
-                    "cant_combine_with": [],
-                    "required_roles": []
-                }
-        
-        if len(new_roles) > 0:
-            self.logger.info(f"Added new roles to role configuration: {new_roles}")
-            role_configuration_json.update(new_roles)
-        
-        # write the role configuration
-        with open(role_configuration_file, "w") as file:
-            json_dump(role_configuration_json, file, indent=4)
-        
-        self.stored_role_configuration = role_configuration_json
-        
-        return None
+    
     
     def create_role_configuration(self) -> None:
         """

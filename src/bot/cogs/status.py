@@ -5,7 +5,7 @@ from discord.ext import commands
 from discord import Embed, Guild, app_commands as apc
 
 from logging import getLogger
-from utilities.custom_member import CustomMember
+from utilities.custom_user import CustomUser
 from utilities.role_handler import RoleHandler
 
 logger = getLogger("main")

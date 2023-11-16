@@ -12,6 +12,8 @@ from discord.ext import commands
 from logging import getLogger
 from utilities.custom_logger import CustomLogger
 from utilities.role_handler import RoleHandler
+from utilities.role_configuration import RoleConfigurationManager
+from utilities.data_handling import DataHandler, get_data_handler
 
 class DoseBot(commands.Bot):
     def __init__(self):
@@ -31,7 +33,12 @@ class DoseBot(commands.Bot):
         
         # create the role handler
         self.role_handler = RoleHandler(self)
-
+        
+        # load the data handler
+        self.data_handler: DataHandler = get_data_handler()
+        
+        self.role_configuration_manager = RoleConfigurationManager(self, self.data_handler)
+        
     
     def setup_loggers(self) -> None:
         """
@@ -103,9 +110,12 @@ class DoseBot(commands.Bot):
         # print how long it took for the bot to be ready
         self.logger.info(f"Bot took {self.bot_ready_time - self.bot_start_time} to be ready!")
         self.is_loaded = True
-        # load the role configuration
-        self.role_handler.load_role_configuration()
-        
+
+        self.role_configuration_manager.load_role_configuration_file()
+
+        # load missing roles
+        self.role_configuration_manager.load_missing_role_configurations()
+
         
     def run(self, bot_token: str) -> None:
         # log the start of the bot with the date
